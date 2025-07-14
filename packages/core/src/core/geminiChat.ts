@@ -15,6 +15,8 @@ import {
   createUserContent,
   Part,
   GenerateContentResponseUsageMetadata,
+  FinishReason,
+  FunctionCall,
 } from '@google/genai';
 import { retryWithBackoff } from '../utils/retry.js';
 import { isFunctionResponse } from '../utils/messageInspectors.js';
@@ -459,25 +461,77 @@ export class GeminiChat {
     streamResponse: AsyncGenerator<GenerateContentResponse>,
     inputContent: Content,
     startTime: number,
-  ) {
+  ): AsyncGenerator<GenerateContentResponse> {
     const outputContent: Content[] = [];
     const chunks: GenerateContentResponse[] = [];
     let errorOccurred = false;
+    let isInsideThinkBlock = false;
+    let thoughtBuffer = '';
+
+    // Helper to create a valid GenerateContentResponse object
+    const createResponse = (content: Content): GenerateContentResponse => {
+      const text = (content.parts && content.parts[0]?.text) || '';
+      return {
+        candidates: [{ content, index: 0, finishReason: FinishReason.FINISH_REASON_UNSPECIFIED }],
+        text: text,
+        functionCalls: [],
+        data: undefined,
+        executableCode: undefined,
+        codeExecutionResult: undefined,
+      };
+    };
 
     try {
       for await (const chunk of streamResponse) {
+        chunks.push(chunk);
+
         if (isValidResponse(chunk)) {
-          chunks.push(chunk);
-          const content = chunk.candidates?.[0]?.content;
-          if (content !== undefined) {
-            if (this.isThoughtContent(content)) {
-              yield chunk;
-              continue;
+          let currentText = chunk.candidates?.[0]?.content?.parts?.[0]?.text || '';
+
+          while (currentText) {
+            if (!isInsideThinkBlock) {
+              const thinkStartIndex = currentText.indexOf('<think>');
+              if (thinkStartIndex === -1) {
+                const regularContent: Content = { role: 'model', parts: [{ text: currentText }] };
+                outputContent.push(regularContent);
+                yield createResponse(regularContent);
+                currentText = '';
+              } else {
+                const regularText = currentText.substring(0, thinkStartIndex);
+                if (regularText) {
+                  const regularContent: Content = { role: 'model', parts: [{ text: regularText }] };
+                  outputContent.push(regularContent);
+                  yield createResponse(regularContent);
+                }
+                isInsideThinkBlock = true;
+                currentText = currentText.substring(thinkStartIndex + '<think>'.length);
+              }
+            } else {
+              const thinkEndIndex = currentText.indexOf('</think>');
+              if (thinkEndIndex === -1) {
+                thoughtBuffer += currentText;
+                currentText = '';
+              } else {
+                const thoughtText = currentText.substring(0, thinkEndIndex);
+                thoughtBuffer += thoughtText;
+
+                if (thoughtBuffer) {
+                  const thoughtContent: Content = {
+                    role: 'model',
+                    parts: [{ text: thoughtBuffer, thought: true }],
+                  };
+                  yield createResponse(thoughtContent);
+                }
+
+                thoughtBuffer = '';
+                isInsideThinkBlock = false;
+                currentText = currentText.substring(thinkEndIndex + '</think>'.length);
+              }
             }
-            outputContent.push(content);
           }
+        } else {
+          yield chunk;
         }
-        yield chunk;
       }
     } catch (error) {
       errorOccurred = true;

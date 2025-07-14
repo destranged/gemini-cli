@@ -73,6 +73,7 @@ export async function createContentGeneratorConfig(
   const localLlmApiKey = process.env.LOCAL_LLM_API_KEY;
   const customBaseUrl = process.env.CUSTOM_BASE_URL;
   const customTimeout = process.env.CUSTOM_TIMEOUT;
+  const customLlmModel = process.env.CUSTOM_LLM_MODEL;
   const azureApiKey = process.env.AZURE_API_KEY;
   const azureEndpointUrl = process.env.AZURE_ENDPOINT_URL;
   const azureApiVersion = process.env.AZURE_API_VERSION;
@@ -164,12 +165,16 @@ export async function createContentGeneratorConfig(
   if (authType === AuthType.USE_LOCAL_LLM) {
     contentGeneratorConfig.apiKey = localLlmApiKey || 'dummy-key'; // Some local LLMs don't need real API keys
     contentGeneratorConfig.baseUrl = customBaseUrl || 'http://localhost:8080';
+    contentGeneratorConfig.model = customLlmModel || 'ShcCodeAssistant';
+
     // For local LLMs, use the model name as-is or default to a common one
+    /*
     if (effectiveModel.includes('gemini')) {
       contentGeneratorConfig.model = 'llama2'; // Default to llama2 for local LLMs
     } else {
       contentGeneratorConfig.model = effectiveModel;
     }
+    */
     return contentGeneratorConfig;
   }
 
